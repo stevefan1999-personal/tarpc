@@ -253,7 +253,7 @@ pub use crate::transport::sealed::Transport;
 use std::{any::Any, error::Error, io, sync::Arc, time::Instant};
 
 /// A message from a client to a server.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde1", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum ClientMessage<T> {
