@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{error::Error, io, pin::Pin};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_serde::{Framed as SerdeFramed, *};
-use tokio_util::codec::{length_delimited::LengthDelimitedCodec, Framed};
+use tokio_util::codec::{Framed, length_delimited::LengthDelimitedCodec};
 
 /// A transport that serializes to, and deserializes from, a byte stream.
 #[pin_project]
@@ -42,10 +42,7 @@ where
     type Item = io::Result<Item>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<io::Result<Item>>> {
-        self.project()
-            .inner
-            .poll_next(cx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        self.project().inner.poll_next(cx).map_err(io::Error::other)
     }
 }
 
@@ -64,28 +61,28 @@ where
         self.project()
             .inner
             .poll_ready(cx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 
     fn start_send(self: Pin<&mut Self>, item: SinkItem) -> io::Result<()> {
         self.project()
             .inner
             .start_send(item)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.project()
             .inner
             .poll_flush(cx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.project()
             .inner
             .poll_close(cx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 }
 
@@ -143,7 +140,7 @@ pub mod tcp {
     /// A connection Future that also exposes the length-delimited framing config.
     #[must_use]
     #[pin_project]
-    pub struct Connect<T, Item, SinkItem, CodecFn> {
+    pub struct TcpConnect<T, Item, SinkItem, CodecFn> {
         #[pin]
         inner: T,
         codec_fn: CodecFn,
@@ -151,7 +148,7 @@ pub mod tcp {
         ghost: PhantomData<(fn(SinkItem), fn() -> Item)>,
     }
 
-    impl<T, Item, SinkItem, Codec, CodecFn> Future for Connect<T, Item, SinkItem, CodecFn>
+    impl<T, Item, SinkItem, Codec, CodecFn> Future for TcpConnect<T, Item, SinkItem, CodecFn>
     where
         T: Future<Output = io::Result<TcpStream>>,
         Item: for<'de> Deserialize<'de>,
@@ -167,7 +164,7 @@ pub mod tcp {
         }
     }
 
-    impl<T, Item, SinkItem, CodecFn> Connect<T, Item, SinkItem, CodecFn> {
+    impl<T, Item, SinkItem, CodecFn> TcpConnect<T, Item, SinkItem, CodecFn> {
         /// Returns an immutable reference to the length-delimited codec's config.
         pub fn config(&self) -> &length_delimited::Builder {
             &self.config
@@ -183,7 +180,7 @@ pub mod tcp {
     pub fn connect<A, Item, SinkItem, Codec, CodecFn>(
         addr: A,
         codec_fn: CodecFn,
-    ) -> Connect<impl Future<Output = io::Result<TcpStream>>, Item, SinkItem, CodecFn>
+    ) -> TcpConnect<impl Future<Output = io::Result<TcpStream>>, Item, SinkItem, CodecFn>
     where
         A: ToSocketAddrs,
         Item: for<'de> Deserialize<'de>,
@@ -191,7 +188,7 @@ pub mod tcp {
         Codec: Serializer<SinkItem> + Deserializer<Item>,
         CodecFn: Fn() -> Codec,
     {
-        Connect {
+        TcpConnect {
             inner: TcpStream::connect(addr),
             codec_fn,
             config: LengthDelimitedCodec::builder(),
@@ -289,7 +286,7 @@ pub mod unix {
         super::*,
         futures::ready,
         std::{marker::PhantomData, path::Path},
-        tokio::net::{unix::SocketAddr, UnixListener, UnixStream},
+        tokio::net::{UnixListener, UnixStream, unix::SocketAddr},
         tokio_util::codec::length_delimited,
     };
 
@@ -307,7 +304,7 @@ pub mod unix {
     /// A connection Future that also exposes the length-delimited framing config.
     #[must_use]
     #[pin_project]
-    pub struct Connect<T, Item, SinkItem, CodecFn> {
+    pub struct UnixConnect<T, Item, SinkItem, CodecFn> {
         #[pin]
         inner: T,
         codec_fn: CodecFn,
@@ -315,7 +312,7 @@ pub mod unix {
         ghost: PhantomData<(fn(SinkItem), fn() -> Item)>,
     }
 
-    impl<T, Item, SinkItem, Codec, CodecFn> Future for Connect<T, Item, SinkItem, CodecFn>
+    impl<T, Item, SinkItem, Codec, CodecFn> Future for UnixConnect<T, Item, SinkItem, CodecFn>
     where
         T: Future<Output = io::Result<UnixStream>>,
         Item: for<'de> Deserialize<'de>,
@@ -331,7 +328,7 @@ pub mod unix {
         }
     }
 
-    impl<T, Item, SinkItem, CodecFn> Connect<T, Item, SinkItem, CodecFn> {
+    impl<T, Item, SinkItem, CodecFn> UnixConnect<T, Item, SinkItem, CodecFn> {
         /// Returns an immutable reference to the length-delimited codec's config.
         pub fn config(&self) -> &length_delimited::Builder {
             &self.config
@@ -348,7 +345,7 @@ pub mod unix {
     pub fn connect<P, Item, SinkItem, Codec, CodecFn>(
         path: P,
         codec_fn: CodecFn,
-    ) -> Connect<impl Future<Output = io::Result<UnixStream>>, Item, SinkItem, CodecFn>
+    ) -> UnixConnect<impl Future<Output = io::Result<UnixStream>>, Item, SinkItem, CodecFn>
     where
         P: AsRef<Path>,
         Item: for<'de> Deserialize<'de>,
@@ -356,7 +353,7 @@ pub mod unix {
         Codec: Serializer<SinkItem> + Deserializer<Item>,
         CodecFn: Fn() -> Codec,
     {
-        Connect {
+        UnixConnect {
             inner: UnixStream::connect(path),
             codec_fn,
             config: LengthDelimitedCodec::builder(),
@@ -561,7 +558,9 @@ pub mod unix {
 mod tests {
     use super::Transport;
     use assert_matches::assert_matches;
-    use futures::{task::*, Sink, SinkExt, Stream, StreamExt};
+    use futures::{Sink, Stream, task::*};
+    #[cfg(any(feature = "tcp", all(unix, feature = "unix")))]
+    use futures::{SinkExt, StreamExt};
     use pin_utils::pin_mut;
     use std::{
         io::{self, Cursor},

@@ -4,32 +4,34 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
+#![allow(clippy::type_complexity)]
+
 use crate::{
     add::{Add as AddService, AddStub},
     double::Double as DoubleService,
 };
 use futures::{future, prelude::*};
+use opentelemetry::trace::TracerProvider as _;
 use std::{
     io,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tarpc::{
+    ClientMessage, RequestName, Response, ServerError, Transport,
     client::{
-        self,
+        self, RpcError,
         stub::{load_balance, retry},
-        RpcError,
     },
     context, serde_transport,
     server::{
-        incoming::{spawn_incoming, Incoming},
-        request_hook::{self, BeforeRequestList},
         BaseChannel,
+        incoming::{Incoming, spawn_incoming},
+        request_hook::{self, BeforeRequestList},
     },
     tokio_serde::formats::Json,
-    ClientMessage, Response, ServerError, Transport,
 };
 use tokio::net::TcpStream;
 use tracing_subscriber::prelude::*;
@@ -76,12 +78,25 @@ where
     }
 }
 
-fn init_tracing(service_name: &str) -> anyhow::Result<()> {
-    let tracer = opentelemetry_jaeger::new_agent_pipeline()
-        .with_service_name(service_name)
-        .with_auto_split_batch(true)
-        .with_max_packet_size(2usize.pow(13))
-        .install_batch(opentelemetry::runtime::Tokio)?;
+/// Initializes an OpenTelemetry tracing subscriber with a OTLP backend.
+pub fn init_tracing(
+    service_name: &'static str,
+) -> anyhow::Result<opentelemetry_sdk::trace::SdkTracerProvider> {
+    let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_resource(
+            opentelemetry_sdk::Resource::builder()
+                .with_service_name(service_name)
+                .build(),
+        )
+        .with_batch_exporter(
+            opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic()
+                .build()
+                .unwrap(),
+        )
+        .build();
+    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+    let tracer = tracer_provider.tracer(service_name);
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::from_default_env())
@@ -89,7 +104,7 @@ fn init_tracing(service_name: &str) -> anyhow::Result<()> {
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .try_init()?;
 
-    Ok(())
+    Ok(tracer_provider)
 }
 
 async fn listen_on_random_port<Item, SinkItem>() -> anyhow::Result<(
@@ -115,7 +130,7 @@ fn make_stub<Req, Resp, const N: usize>(
     load_balance::RoundRobin<client::Channel<Arc<Req>, Resp>>,
 >
 where
-    Req: Send + Sync + 'static,
+    Req: RequestName + Send + Sync + 'static,
     Resp: Send + Sync + 'static,
 {
     let stub = load_balance::RoundRobin::new(
@@ -124,20 +139,19 @@ where
             .map(|transport| tarpc::client::new(client::Config::default(), transport).spawn())
             .collect(),
     );
-    let stub = retry::Retry::new(stub, |resp, attempts| {
+    retry::Retry::new(stub, |resp, attempts| {
         if let Err(e) = resp {
             tracing::warn!("Got an error: {e:?}");
             attempts < 3
         } else {
             false
         }
-    });
-    stub
+    })
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("tarpc_tracing_example")?;
+    let tracer_provider = init_tracing("tarpc_tracing_example")?;
 
     let (add_listener1, addr1) = listen_on_random_port().await?;
     let (add_listener2, addr2) = listen_on_random_port().await?;
@@ -184,7 +198,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("{:?}", double_client.double(ctx, 1).await?);
     }
 
-    opentelemetry::global::shutdown_tracer_provider();
+    tracer_provider.shutdown()?;
 
     Ok(())
 }

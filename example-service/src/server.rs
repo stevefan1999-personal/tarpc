@@ -7,17 +7,17 @@
 use clap::Parser;
 use futures::{future, prelude::*};
 use rand::{
-    distributions::{Distribution, Uniform},
-    thread_rng,
+    distr::{Distribution, Uniform},
+    rng,
 };
-use service::{init_tracing, World};
+use service::{World, init_tracing};
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 use tarpc::{
     context,
-    server::{self, incoming::Incoming, Channel},
+    server::{self, Channel, incoming::Incoming},
     tokio_serde::formats::Json,
 };
 use tokio::time;
@@ -37,7 +37,7 @@ struct HelloServer(SocketAddr);
 impl World for HelloServer {
     async fn hello(self, _: context::Context, name: String) -> String {
         let sleep_time =
-            Duration::from_millis(Uniform::new_inclusive(1, 10).sample(&mut thread_rng()));
+            Duration::from_millis(Uniform::new_inclusive(1, 10).unwrap().sample(&mut rng()));
         time::sleep(sleep_time).await;
         format!("Hello, {name}! You are connected from {}", self.0)
     }

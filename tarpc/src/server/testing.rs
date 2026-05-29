@@ -5,14 +5,14 @@
 // https://opensource.org/licenses/MIT.
 
 use crate::{
-    cancellations::{cancellations, CanceledRequests, RequestCancellation},
+    Request, Response,
+    cancellations::{CanceledRequests, RequestCancellation, cancellations},
     context,
     server::{Channel, Config, ResponseGuard, TrackedRequest},
-    Request, Response,
 };
-use futures::{task::*, Sink, Stream};
+use futures::{Sink, Stream, task::*};
 use pin_project::pin_project;
-use std::{collections::VecDeque, io, pin::Pin, time::SystemTime};
+use std::{collections::VecDeque, io, pin::Pin, time::Instant};
 use tracing::Span;
 
 #[pin_project]
@@ -93,8 +93,8 @@ impl<Req, Resp> FakeChannel<io::Result<TrackedRequest<Req>>, Response<Resp>> {
         self.stream.push_back(Ok(TrackedRequest {
             request: Request {
                 context: context::Context {
-                    deadline: SystemTime::UNIX_EPOCH,
-                    trace_context: Default::default(),
+                    deadline: Instant::now(),
+                    trace_context: crate::trace::Context::default(),
                 },
                 id,
                 message,
@@ -114,10 +114,10 @@ impl FakeChannel<(), ()> {
     pub fn default<Req, Resp>() -> FakeChannel<io::Result<TrackedRequest<Req>>, Response<Resp>> {
         let (request_cancellation, canceled_requests) = cancellations();
         FakeChannel {
-            stream: Default::default(),
-            sink: Default::default(),
-            config: Default::default(),
-            in_flight_requests: Default::default(),
+            stream: VecDeque::default(),
+            sink: VecDeque::default(),
+            config: Config::default(),
+            in_flight_requests: super::in_flight_requests::InFlightRequests::default(),
             request_cancellation,
             canceled_requests,
         }

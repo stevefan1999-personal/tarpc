@@ -7,22 +7,23 @@
 use std::{
     collections::HashMap,
     hash::{BuildHasher, Hash},
-    time::{Duration, SystemTime},
+    time::{Duration, Instant},
 };
 
+pub(crate) mod print_err;
 #[cfg(feature = "serde1")]
 #[cfg_attr(docsrs, doc(cfg(feature = "serde1")))]
 pub mod serde;
 
-/// Extension trait for [SystemTimes](SystemTime) in the future, i.e. deadlines.
+/// Extension trait for [Instants](Instant) in the future, i.e. deadlines.
 pub trait TimeUntil {
     /// How much time from now until this time is reached.
     fn time_until(&self) -> Duration;
 }
 
-impl TimeUntil for SystemTime {
+impl TimeUntil for Instant {
     fn time_until(&self) -> Duration {
-        self.duration_since(SystemTime::now()).unwrap_or_default()
+        self.duration_since(Instant::now())
     }
 }
 

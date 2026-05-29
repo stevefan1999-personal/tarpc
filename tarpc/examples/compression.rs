@@ -4,8 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
-use flate2::{read::DeflateDecoder, write::DeflateEncoder, Compression};
-use futures::{prelude::*, Sink, SinkExt, Stream, StreamExt, TryStreamExt};
+use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
+use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt, prelude::*};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use std::{io, io::Read, io::Write};
@@ -32,7 +32,7 @@ pub enum CompressedMessage<T> {
 }
 
 #[derive(Deserialize, Serialize)]
-enum CompressionType {
+pub enum CompressionType {
     Uncompressed,
     Compressed,
 }
@@ -74,21 +74,23 @@ where
 }
 
 fn serialize<T: Serialize>(t: T) -> io::Result<ByteBuf> {
-    bincode::serialize(&t)
+    bincode::serde::encode_to_vec(&t, bincode::config::standard())
         .map(ByteBuf::from)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        .map_err(io::Error::other)
 }
 
 fn deserialize<D>(message: ByteBuf) -> io::Result<D>
 where
     for<'a> D: Deserialize<'a>,
 {
-    bincode::deserialize(message.as_ref()).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    let (d, _) = bincode::serde::decode_from_slice(message.as_ref(), bincode::config::standard())
+        .map_err(io::Error::other)?;
+    Ok(d)
 }
 
 fn add_compression<In, Out>(
     transport: impl Stream<Item = io::Result<CompressedMessage<In>>>
-        + Sink<CompressedMessage<Out>, Error = io::Error>,
+    + Sink<CompressedMessage<Out>, Error = io::Error>,
 ) -> impl Stream<Item = io::Result<In>> + Sink<Out, Error = io::Error>
 where
     Out: Serialize,

@@ -6,7 +6,7 @@ pub use round_robin::RoundRobin;
 /// Provides a stub that load-balances with a simple round-robin strategy.
 mod round_robin {
     use crate::{
-        client::{stub, RpcError},
+        client::{RpcError, stub},
         context,
     };
     use cycle::AtomicCycle;
@@ -21,11 +21,10 @@ mod round_robin {
         async fn call(
             &self,
             ctx: context::Context,
-            request_name: &'static str,
             request: Self::Req,
         ) -> Result<Stub::Resp, RpcError> {
             let next = self.stubs.next();
-            next.call(ctx, request_name, request).await
+            next.call(ctx, request).await
         }
     }
 
@@ -49,8 +48,8 @@ mod round_robin {
 
     mod cycle {
         use std::sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicUsize, Ordering},
         };
 
         /// Cycles endlessly and atomically over a collection of elements of type T.
@@ -67,7 +66,7 @@ mod round_robin {
             pub fn new(elements: Vec<T>) -> Self {
                 Self(Arc::new(State {
                     elements,
-                    next: Default::default(),
+                    next: AtomicUsize::new(0),
                 }))
             }
 
@@ -100,12 +99,12 @@ mod round_robin {
 /// the same stub.
 mod consistent_hash {
     use crate::{
-        client::{stub, RpcError},
+        client::{RpcError, stub},
         context,
     };
     use std::{
         collections::hash_map::RandomState,
-        hash::{BuildHasher, Hash, Hasher},
+        hash::{BuildHasher, Hash},
         num::TryFromIntError,
     };
 
@@ -121,15 +120,14 @@ mod consistent_hash {
         async fn call(
             &self,
             ctx: context::Context,
-            request_name: &'static str,
             request: Self::Req,
         ) -> Result<Stub::Resp, RpcError> {
-            let index = usize::try_from(self.hash_request(&request) % self.stubs_len).expect(
+            let index = usize::try_from(self.hasher.hash_one(&request) % self.stubs_len).expect(
                 "invariant broken: stubs_len is not larger than a usize, \
                          so the hash modulo stubs_len should always fit in a usize",
             );
             let next = &self.stubs[index];
-            next.call(ctx, request_name, request).await
+            next.call(ctx, request).await
         }
     }
 
@@ -172,19 +170,13 @@ mod consistent_hash {
                 hasher,
             })
         }
-
-        fn hash_request(&self, req: &Stub::Req) -> u64 {
-            let mut hasher = self.hasher.build_hasher();
-            req.hash(&mut hasher);
-            hasher.finish()
-        }
     }
 
     #[cfg(test)]
     mod tests {
         use super::ConsistentHash;
         use crate::{
-            client::stub::{mock::Mock, Stub},
+            client::stub::{Stub, mock::Mock},
             context,
         };
         use std::{
@@ -208,13 +200,13 @@ mod consistent_hash {
             )?;
 
             for _ in 0..2 {
-                let resp = stub.call(context::current(), "", 'a').await?;
+                let resp = stub.call(context::current(), 'a').await?;
                 assert_eq!(resp, 1);
 
-                let resp = stub.call(context::current(), "", 'b').await?;
+                let resp = stub.call(context::current(), 'b').await?;
                 assert_eq!(resp, 2);
 
-                let resp = stub.call(context::current(), "", 'c').await?;
+                let resp = stub.call(context::current(), 'c').await?;
                 assert_eq!(resp, 3);
             }
 

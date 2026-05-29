@@ -16,7 +16,7 @@ use std::{
     collections::hash_map::Entry, convert::TryFrom, fmt, hash::Hash, marker::Unpin, pin::Pin,
 };
 use tokio::sync::mpsc;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 /// An [`Incoming`](crate::server::incoming::Incoming) stream that drops new channels based on
 /// per-key limits.
@@ -197,8 +197,8 @@ where
             }
             Entry::Occupied(mut o) => {
                 let count = o.get().strong_count();
-                if count >= TryFrom::try_from(*self_.channels_per_key).unwrap() {
-                    info!(
+                if count >= usize::try_from(*self_.channels_per_key).unwrap() {
+                    debug!(
                         channel_filter_key = %key,
                         open_channels = count,
                         max_open_channels = *self_.channels_per_key,
@@ -336,7 +336,7 @@ fn tracked_channel_sink() {
     assert_matches!(channel.as_mut().poll_ready(&mut ctx()), Poll::Ready(Ok(())));
     assert_matches!(channel.as_mut().start_send("test"), Ok(()));
     assert_matches!(channel.as_mut().poll_flush(&mut ctx()), Poll::Ready(Ok(())));
-    assert_matches!(chan_rx.try_next(), Ok(Some("test")));
+    assert_matches!(chan_rx.try_recv(), Ok("test"));
 }
 
 #[test]

@@ -38,10 +38,10 @@ use futures::{
     future::{self, AbortHandle},
     prelude::*,
 };
+use opentelemetry::trace::TracerProvider as _;
 use publisher::Publisher as _;
 use std::{
     collections::HashMap,
-    env,
     error::Error,
     io,
     net::SocketAddr,
@@ -113,7 +113,7 @@ impl Subscriber {
                 return Err(anyhow!(
                     "[{}] Server never initialized the subscriber.",
                     local_addr
-                ))
+                ));
             }
         };
         let (handler, abort_handle) =
@@ -223,7 +223,7 @@ impl Publisher {
             for topic in topics {
                 subscriptions
                     .entry(topic)
-                    .or_insert_with(HashMap::new)
+                    .or_default()
                     .insert(subscriber_addr, subscriber.clone());
             }
         }
@@ -283,26 +283,38 @@ impl publisher::Publisher for Publisher {
     }
 }
 
-/// Initializes an OpenTelemetry tracing subscriber with a Jaeger backend.
-fn init_tracing(service_name: &str) -> anyhow::Result<()> {
-    env::set_var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "12");
-    let tracer = opentelemetry_jaeger::new_agent_pipeline()
-        .with_service_name(service_name)
-        .with_max_packet_size(2usize.pow(13))
-        .install_batch(opentelemetry::runtime::Tokio)?;
+/// Initializes an OpenTelemetry tracing subscriber with a OTLP backend.
+pub fn init_tracing(
+    service_name: &'static str,
+) -> anyhow::Result<opentelemetry_sdk::trace::SdkTracerProvider> {
+    let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_resource(
+            opentelemetry_sdk::Resource::builder()
+                .with_service_name(service_name)
+                .build(),
+        )
+        .with_batch_exporter(
+            opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic()
+                .build()
+                .unwrap(),
+        )
+        .build();
+    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+    let tracer = tracer_provider.tracer(service_name);
 
     tracing_subscriber::registry()
-        .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+        .with(tracing_subscriber::EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
         .with(tracing_opentelemetry::layer().with_tracer(tracer))
         .try_init()?;
 
-    Ok(())
+    Ok(tracer_provider)
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("Pub/Sub")?;
+    let tracer_provider = init_tracing("Pub/Sub")?;
 
     let addrs = Publisher {
         clients: Arc::new(Mutex::new(HashMap::new())),
@@ -355,7 +367,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    opentelemetry::global::shutdown_tracer_provider();
+    tracer_provider.shutdown()?;
     info!("done.");
 
     Ok(())

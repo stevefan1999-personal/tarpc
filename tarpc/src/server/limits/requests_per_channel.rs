@@ -5,8 +5,8 @@
 // https://opensource.org/licenses/MIT.
 
 use crate::{
-    server::{Channel, Config},
     Response, ServerError,
+    server::{Channel, Config},
 };
 use futures::{prelude::*, ready, task::*};
 use pin_project::pin_project;
@@ -60,7 +60,7 @@ where
             match ready!(self.as_mut().project().inner.poll_next(cx)?) {
                 Some(r) => {
                     let _entered = r.span.enter();
-                    tracing::info!(
+                    tracing::debug!(
                         in_flight_requests = self.as_mut().in_flight_requests(),
                         "ThrottleRequest",
                     );
@@ -179,13 +179,13 @@ mod tests {
     use super::*;
 
     use crate::server::{
-        testing::{self, FakeChannel, PollExt},
         TrackedRequest,
+        testing::{self, FakeChannel, PollExt},
     };
     use pin_utils::pin_mut;
     use std::{
         marker::PhantomData,
-        time::{Duration, SystemTime},
+        time::{Duration, Instant},
     };
     use tracing::Span;
 
@@ -201,11 +201,7 @@ mod tests {
             throttler
                 .inner
                 .in_flight_requests
-                .start_request(
-                    i,
-                    SystemTime::now() + Duration::from_secs(1),
-                    Span::current(),
-                )
+                .start_request(i, Instant::now() + Duration::from_secs(1), Span::current())
                 .unwrap();
         }
         assert_eq!(throttler.as_mut().in_flight_requests(), 5);
@@ -253,7 +249,7 @@ mod tests {
         throttler.inner.push_req(1, 1);
         assert!(throttler.as_mut().poll_next(&mut testing::cx()).is_done());
         assert_eq!(throttler.inner.sink.len(), 1);
-        let resp = throttler.inner.sink.get(0).unwrap();
+        let resp = throttler.inner.sink.front().unwrap();
         assert_eq!(resp.request_id, 1);
         assert!(resp.message.is_err());
     }
@@ -271,8 +267,8 @@ mod tests {
             ghost: PhantomData<fn(Out) -> In>,
         }
         impl PendingSink<(), ()> {
-            pub fn default<Req, Resp>(
-            ) -> PendingSink<io::Result<TrackedRequest<Req>>, Response<Resp>> {
+            pub fn default<Req, Resp>()
+            -> PendingSink<io::Result<TrackedRequest<Req>>, Response<Resp>> {
                 PendingSink { ghost: PhantomData }
             }
         }
@@ -324,11 +320,7 @@ mod tests {
         throttler
             .inner
             .in_flight_requests
-            .start_request(
-                0,
-                SystemTime::now() + Duration::from_secs(1),
-                Span::current(),
-            )
+            .start_request(0, Instant::now() + Duration::from_secs(1), Span::current())
             .unwrap();
         throttler
             .as_mut()
@@ -339,7 +331,7 @@ mod tests {
             .unwrap();
         assert_eq!(throttler.inner.in_flight_requests.len(), 0);
         assert_eq!(
-            throttler.inner.sink.get(0),
+            throttler.inner.sink.front(),
             Some(&Response {
                 request_id: 0,
                 message: Ok(1),

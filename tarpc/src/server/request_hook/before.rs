@@ -6,7 +6,7 @@
 
 //! Provides a hook that runs before request execution.
 
-use crate::{context, server::Serve, ServerError};
+use crate::{ServerError, context, server::Serve};
 use futures::prelude::*;
 
 /// A hook that runs before request execution.
@@ -157,7 +157,10 @@ impl<Req> BeforeRequest<Req> for BeforeRequestNil {
 impl<Req, First: BeforeRequest<Req>, Rest: BeforeRequestList<Req>> BeforeRequestList<Req>
     for BeforeRequestCons<First, Rest>
 {
-    type Then<Next> = BeforeRequestCons<First, Rest::Then<Next>> where Next: BeforeRequest<Req>;
+    type Then<Next>
+        = BeforeRequestCons<First, Rest::Then<Next>>
+    where
+        Next: BeforeRequest<Req>;
 
     fn then<Next: BeforeRequest<Req>>(self, next: Next) -> Self::Then<Next> {
         let BeforeRequestCons(first, rest) = self;
@@ -172,7 +175,10 @@ impl<Req, First: BeforeRequest<Req>, Rest: BeforeRequestList<Req>> BeforeRequest
 }
 
 impl<Req> BeforeRequestList<Req> for BeforeRequestNil {
-    type Then<Next> = BeforeRequestCons<Next, BeforeRequestNil> where Next: BeforeRequest<Req>;
+    type Then<Next>
+        = BeforeRequestCons<Next, BeforeRequestNil>
+    where
+        Next: BeforeRequest<Req>;
 
     fn then<Next: BeforeRequest<Req>>(self, next: Next) -> Self::Then<Next> {
         BeforeRequestCons(next, BeforeRequestNil)
